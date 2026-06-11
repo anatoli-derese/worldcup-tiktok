@@ -29,16 +29,32 @@ TIKTOK_LOGIN_URL = "https://www.tiktok.com/login"
 def login():
     """Open browser for manual TikTok login. Saves browser state to STATE_FILE."""
     from playwright.sync_api import sync_playwright
+    import tempfile
 
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+    # Use a persistent profile directory so it looks like a real browser
+    profile_dir = Path(tempfile.gettempdir()) / "tiktok_profile"
+    profile_dir.mkdir(exist_ok=True)
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context(
+        # Launch with persistent context - more like a real user
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=str(profile_dir),
+            headless=False,
+            channel="chrome",
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-first-run",
+                "--no-default-browser-check",
+            ],
             viewport={"width": 1280, "height": 900},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
         )
-        page = context.new_page()
+        page = context.pages[0] if context.pages else context.new_page()
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            delete navigator.__proto__.webdriver;
+        """)
         page.goto(TIKTOK_LOGIN_URL, wait_until="domcontentloaded")
         
         print("\n" + "=" * 60)
@@ -62,7 +78,7 @@ def login():
                     print("\n✓ Login detected! Saving session...")
                     context.storage_state(path=str(STATE_FILE))
                     print(f"✓ Session saved to {STATE_FILE}")
-                    browser.close()
+                    context.close()
                     return True
             except Exception:
                 pass
