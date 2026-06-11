@@ -9,7 +9,22 @@ from src.utils import get_logger
 
 logger = get_logger(__name__)
 
-TIKTOK_ENABLED = os.environ.get("TIKTOK_CLIENT_KEY") and os.environ.get("TIKTOK_CLIENT_SECRET")
+TIKTOK_API = os.environ.get("TIKTOK_CLIENT_KEY") and os.environ.get("TIKTOK_CLIENT_SECRET")
+TIKTOK_BROWSER = None  # lazily checked
+
+
+def _tiktok_available() -> bool:
+    """Check if any TikTok upload method is available."""
+    global TIKTOK_BROWSER
+    if TIKTOK_API:
+        return True
+    if TIKTOK_BROWSER is None:
+        try:
+            from src.tiktok_browser import is_configured
+            TIKTOK_BROWSER = is_configured()
+        except Exception:
+            TIKTOK_BROWSER = False
+    return TIKTOK_BROWSER
 
 
 def run_pipeline() -> list[dict]:
@@ -54,27 +69,43 @@ def _process_match(match) -> dict:
         "casual_video": str(casual_video) if casual_video else None,
         "formal_script": scripts.formal_script[:100],
         "casual_script": scripts.casual_script[:100],
-        "tiktok_formal": _upload_to_tiktok(formal_video, scripts, match, "formal") if TIKTOK_ENABLED else None,
-        "tiktok_casual": _upload_to_tiktok(casual_video, scripts, match, "casual") if TIKTOK_ENABLED else None,
+        "tiktok_formal": _upload_to_tiktok(formal_video, scripts, match, "formal") if _tiktok_available() else None,
+        "tiktok_casual": _upload_to_tiktok(casual_video, scripts, match, "casual") if _tiktok_available() else None,
     }
 
 
 def _upload_to_tiktok(video_path, scripts, match, style: str) -> dict | None:
-    """Upload a video to TikTok. Returns {publish_id, error} or None if skipped."""
+    """Upload a video to TikTok. Tries API first, falls back to browser automation.
+    Returns {method, publish_id/success, error} or None if skipped."""
     if not video_path:
         return None
+    caption = _build_tiktok_caption(match, style)
+
+    # Try official API first
+    if TIKTOK_API:
+        try:
+            from src.tiktok_upload import upload_video as api_upload
+            publish_id, error = api_upload(str(video_path), caption)
+            if error:
+                logger.error(f"TikTok API upload failed ({style}): {error}")
+            else:
+                logger.info(f"TikTok API upload OK ({style}): {publish_id}")
+            return {"method": "api", "publish_id": publish_id, "error": error}
+        except Exception as e:
+            logger.error(f"TikTok API exception ({style}): {e}")
+
+    # Fall back to browser automation
     try:
-        from src.tiktok_upload import upload_video
-        caption = _build_tiktok_caption(match, style)
-        publish_id, error = upload_video(str(video_path), caption)
-        if error:
-            logger.error(f"TikTok upload failed ({style}): {error}")
+        from src.tiktok_browser import upload_video as browser_upload
+        ok, msg = browser_upload(str(video_path), caption)
+        if ok:
+            logger.info(f"TikTok browser upload OK ({style}): {msg}")
         else:
-            logger.info(f"TikTok upload OK ({style}): {publish_id}")
-        return {"publish_id": publish_id, "error": error}
+            logger.error(f"TikTok browser upload failed ({style}): {msg}")
+        return {"method": "browser", "success": ok, "error": msg if not ok else None}
     except Exception as e:
-        logger.error(f"TikTok upload exception ({style}): {e}")
-        return {"publish_id": None, "error": str(e)}
+        logger.error(f"TikTok browser exception ({style}): {e}")
+        return {"method": "none", "success": False, "error": str(e)}
 
 
 def _build_tiktok_caption(match, style: str) -> str:
