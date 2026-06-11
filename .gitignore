@@ -1,1 +1,12 @@
 .env
+data/audio/
+data/output/
+data/images/
+*.mp3
+*.mp4
+*.jpg
+*.jpeg
+*.png
+__pycache__/
+*.pyc
+tokens.json
