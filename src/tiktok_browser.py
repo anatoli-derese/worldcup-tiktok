@@ -3,15 +3,8 @@ TikTok browser automation upload via Playwright.
 No API approval needed. Login once, then automated uploads.
 
 Usage:
-  # One-time login (needs a visible browser - run on laptop or with VNC)
-  python src/tiktok_browser.py login
-
-  # Upload a video
-  python src/tiktok_browser.py upload data/output/video.mp4 "caption #hashtags"
-
-  # Programmatic use from pipeline:
-  from src.tiktok_browser import upload_video
-  ok, msg = upload_video("data/output/video.mp4", "my caption")
+  python src/tiktok_browser.py login    — one-time login (needs display)
+  python src/tiktok_browser.py upload <video.mp4> [caption]
 """
 import os
 import sys
@@ -22,246 +15,180 @@ from pathlib import Path
 log = logging.getLogger("tiktok_browser")
 
 STATE_FILE = Path(__file__).resolve().parent.parent / "data" / "tiktok_state.json"
-TIKTOK_UPLOAD_URL = "https://www.tiktok.com/creator-tools/upload"
-TIKTOK_LOGIN_URL = "https://www.tiktok.com/login"
 
 
-def login():
-    """Open browser for manual TikTok login. Saves browser state to STATE_FILE."""
+def _login():
+    """Open browser for manual TikTok login."""
     from playwright.sync_api import sync_playwright
-    import tempfile
 
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    # Use a persistent profile directory so it looks like a real browser
-    profile_dir = Path(tempfile.gettempdir()) / "tiktok_profile"
-    profile_dir.mkdir(exist_ok=True)
-
     with sync_playwright() as p:
-        # Launch with persistent context - more like a real user
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            headless=False,
-            channel="chrome",
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-first-run",
-                "--no-default-browser-check",
-            ],
+        browser = p.chromium.launch(headless=False)
+        context = browser.new_context(
             viewport={"width": 1280, "height": 900},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         )
-        page = context.pages[0] if context.pages else context.new_page()
-        page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-            delete navigator.__proto__.webdriver;
-        """)
-        page.goto(TIKTOK_LOGIN_URL, wait_until="domcontentloaded")
-        
+        page = context.new_page()
+        page.goto("https://www.tiktok.com/login", wait_until="domcontentloaded")
+
         print("\n" + "=" * 60)
         print("LOG IN TO TIKTOK IN THE BROWSER WINDOW")
-        print("Use QR code or email/phone login")
-        print("The script will auto-detect when you're logged in")
         print("=" * 60 + "\n")
 
-        # Wait for login - detect by URL change or cookie presence
-        timeout = 300  # 5 minutes
         start = time.time()
-        while time.time() - start < timeout:
-            try:
-                cookies = context.cookies()
-                logged_in = any(
-                    c.get("name") in ("sessionid", "sid_guard", "tt_webid") 
-                    and c.get("value") 
-                    for c in cookies
-                )
-                if logged_in and "login" not in page.url.lower():
-                    print("\n✓ Login detected! Saving session...")
-                    context.storage_state(path=str(STATE_FILE))
-                    print(f"✓ Session saved to {STATE_FILE}")
-                    context.close()
-                    return True
-            except Exception:
-                pass
+        while time.time() - start < 300:
+            cookies = context.cookies()
+            logged = any(
+                c.get("name") in ("sessionid", "sid_guard") and c.get("value")
+                for c in cookies
+            )
+            if logged and "login" not in page.url.lower():
+                print("\nLogged in! Saving session...")
+                context.storage_state(path=str(STATE_FILE))
+                print(f"Saved → {STATE_FILE}")
+                browser.close()
+                return True
             time.sleep(2)
 
-        print("✗ Login timed out (5 minutes)")
+        print("Timed out")
         return False
 
 
-def upload_video(video_path: str, caption: str, headless: bool = True) -> tuple:
-    """Upload a video to TikTok using saved browser session.
-    
-    Returns (success: bool, message: str)
-    """
+def upload_video(video_path: str, caption: str = "") -> tuple:
+    """Upload video to TikTok via headless browser. Returns (ok, message)."""
     from playwright.sync_api import sync_playwright
 
     video_path = os.path.abspath(video_path)
     if not os.path.exists(video_path):
-        return False, f"Video not found: {video_path}"
-    
+        return False, f"Not found: {video_path}"
     if not STATE_FILE.exists():
-        return False, f"No session state. Run 'python src/tiktok_browser.py login' first on a machine with a display."
+        return False, "No session — run login first"
 
     file_size = os.path.getsize(video_path)
-    log.info(f"Uploading: {video_path} ({file_size / 1024 / 1024:.1f} MB)")
-    log.info(f"Caption: {caption[:80]}")
+    log.info(f"Upload: {video_path} ({file_size/1024/1024:.1f}MB)")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=True,  # Always headless for pipeline
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-            ],
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
         )
         context = browser.new_context(
             storage_state=str(STATE_FILE),
             viewport={"width": 1280, "height": 900},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
         )
         
         try:
             page = context.new_page()
-            
-            # Navigate to upload page
-            log.info("Navigating to upload page...")
-            page.goto(TIKTOK_UPLOAD_URL, wait_until="domcontentloaded", timeout=30000)
-            time.sleep(3)
-            
-            # Check if we're still logged in
+
+            # 1. Open upload page
+            page.goto("https://www.tiktok.com/upload", wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_selector(
+                'input[type="file"][accept*="video"]', state="attached", timeout=30000
+            )
+
             if "login" in page.url.lower():
-                return False, "Session expired. Re-run: python src/tiktok_browser.py login"
-            
-            # TikTok upload flow: file input is hidden, need to trigger it
-            # The upload page typically has an iframe or a "Select file" area
-            
-            # Try finding file input - TikTok's upload uses a hidden <input type="file">
-            file_input = page.locator('input[type="file"]').first
-            
-            if not file_input.count():
-                # Sometimes the upload page loads inside an iframe
-                for frame in page.frames:
-                    file_input = frame.locator('input[type="file"]').first
-                    if file_input.count():
-                        log.info(f"Found file input in iframe: {frame.url[:80]}")
+                return False, "Session expired — re-run login"
+
+            # 2. Upload file
+            log.info("Uploading video...")
+            page.locator('input[type="file"][accept*="video"]').first.set_input_files(video_path)
+            time.sleep(6)
+
+            # 3. Dismiss modals
+            modal = page.locator('[role="dialog"]')
+            if modal.count():
+                for t in ["Turn on", "Continue", "Confirm", "OK", "Got it"]:
+                    btn = modal.locator(f'button:has-text("{t}")')
+                    if btn.count():
+                        btn.first.click()
+                        time.sleep(2)
                         break
             
-            if not file_input or not file_input.count():
-                # Try clicking the upload area to trigger file dialog, then set file
-                upload_area = page.locator('div:has-text("Select video"), div:has-text("Upload video"), [data-e2e="file-upload"]').first
-                if upload_area.count():
-                    upload_area.click()
-                    time.sleep(1)
-                    file_input = page.locator('input[type="file"]').first
-            
-            if not file_input or not file_input.count():
-                # Last resort: set file on any file input in the page
-                log.warning("Could not find file input via selectors, trying direct approach...")
-                file_input = page.locator('input[type="file"]')
-            
-            if file_input.count():
-                log.info("Setting video file...")
-                file_input.set_input_files(video_path)
-                time.sleep(5)  # Wait for upload processing
-            else:
-                return False, "Could not find file upload element. TikTok UI may have changed."
-            
-            # Wait for video to process - look for caption field appearing
-            log.info("Waiting for video processing...")
-            try:
-                # Wait for caption/description field to appear (indicates upload done)
-                caption_field = page.locator(
-                    '[contenteditable="true"], [data-e2e="caption"], [data-e2e="post-description"], '
-                    'div[role="textbox"], .public-DraftEditor-content'
-                ).first
-                caption_field.wait_for(state="visible", timeout=120000)
-                log.info("Video processed, filling caption...")
-                
-                # Type caption
-                caption_field.click()
-                time.sleep(0.5)
-                # Clear existing text
-                page.keyboard.press("Control+a")
-                page.keyboard.press("Delete")
-                # Type new caption
-                page.keyboard.type(caption)
-                time.sleep(1)
-            except Exception as e:
-                log.warning(f"Caption field interaction failed: {e}")
-                # Try alternative: just type into the page
-                page.keyboard.type(caption)
-                time.sleep(1)
-            
-            # Click post/publish button
-            log.info("Clicking post button...")
-            post_button = page.locator(
-                'button:has-text("Post"), button:has-text("Publish"), '
-                '[data-e2e="post-video"], [data-e2e="publish-button"]'
-            ).first
-            
-            if post_button.count():
-                post_button.click()
-                log.info("Post button clicked")
-                time.sleep(5)
-                
-                # Check for success
-                if "upload" not in page.url.lower():
-                    log.info("Upload appears successful (URL changed from upload page)")
-                    browser.close()
-                    return True, "Uploaded successfully"
-                else:
-                    # Might have a confirmation modal
-                    confirm_btn = page.locator('button:has-text("Post"), button:has-text("Confirm")').first
-                    if confirm_btn.count():
-                        confirm_btn.click()
-                        time.sleep(3)
-                    browser.close()
-                    return True, "Upload completed"
-            else:
-                return False, "Could not find post button. TikTok UI may have changed."
-                
+            page.keyboard.press("Escape")
+            time.sleep(1)
+            page.keyboard.press("Escape")
+            time.sleep(1)
+
+            # 4. Fill caption if needed
+            if caption:
+                try:
+                    caption_field = page.locator(
+                        '[contenteditable="true"], div[role="textbox"], .public-DraftEditor-content'
+                    ).first
+                    if caption_field.count():
+                        caption_field.click(force=True)
+                        time.sleep(0.5)
+                        page.keyboard.press("Control+a")
+                        page.keyboard.press("Delete")
+                        page.keyboard.type(caption)
+                        time.sleep(1)
+                except Exception as e:
+                    log.warning(f"Caption fill skipped: {e}")
+
+            # 5. Click Post button
+            btns = page.locator("button")
+            post_btn = None
+            for i in range(btns.count()):
+                try:
+                    if btns.nth(i).inner_text().strip().lower() == "post":
+                        post_btn = btns.nth(i)
+                        break
+                except Exception:
+                    continue
+
+            if not post_btn:
+                page.screenshot(path="/tmp/tiktok_no_post.png")
+                return False, "Post button not found"
+
+            post_btn.click(force=True)
+            log.info("Post clicked")
+            time.sleep(5)
+
+            # 6. Handle confirmation
+            time.sleep(3)
+            for t in ["Post", "Confirm"]:
+                c = page.locator(f'button:has-text("{t}")')
+                if c.count():
+                    for i in range(c.count()):
+                        if c.nth(i).is_visible():
+                            c.nth(i).click(force=True)
+                            log.info(f"'{t}' confirmed")
+                            time.sleep(3)
+                            break
+
+            log.info("Upload complete!")
+            return True, "Uploaded successfully"
+
         except Exception as e:
-            log.error(f"Upload error: {e}")
-            # Take screenshot for debugging
+            log.error(f"Error: {e}")
             try:
                 page.screenshot(path="/tmp/tiktok_error.png")
-                log.info("Error screenshot saved to /tmp/tiktok_error.png")
-            except:
+            except Exception:
                 pass
             return False, str(e)
         finally:
             browser.close()
 
 
-def is_configured() -> bool:
-    """Check if browser session exists for TikTok uploads."""
+def is_configured():
     return STATE_FILE.exists()
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    
     if len(sys.argv) < 2:
-        print("Usage:")
-        print("  python src/tiktok_browser.py login")
-        print("  python src/tiktok_browser.py upload <video.mp4> [caption]")
+        print("Usage: python src/tiktok_browser.py login|upload <video> [caption]")
         sys.exit(1)
-    
-    action = sys.argv[1]
-    if action == "login":
-        success = login()
-        sys.exit(0 if success else 1)
-    elif action == "upload":
-        if len(sys.argv) < 3:
-            print("Usage: python src/tiktok_browser.py upload <video.mp4> [caption]")
+
+    if sys.argv[1] == "login":
+        sys.exit(0 if _login() else 1)
+    elif sys.argv[1] == "upload":
+        vid = sys.argv[2] if len(sys.argv) > 2 else None
+        if not vid:
+            print("Missing video path")
             sys.exit(1)
-        vid = sys.argv[2]
-        cap = sys.argv[3] if len(sys.argv) > 3 else "#WorldCup2026 #FIFA"
+        cap = sys.argv[3] if len(sys.argv) > 3 else ""
         ok, msg = upload_video(vid, cap)
-        print(f"\n{'✓' if ok else '✗'} {msg}")
+        print(f"{'OK' if ok else 'FAIL'}: {msg}")
         sys.exit(0 if ok else 1)
-    else:
-        print(f"Unknown action: {action}")
-        sys.exit(1)
