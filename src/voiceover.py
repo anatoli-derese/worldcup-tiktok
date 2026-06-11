@@ -1,6 +1,6 @@
 """Generate Amharic voiceover using gTTS with Gemini TTS fallback."""
 from pathlib import Path
-from src.config import GEMINI_API_KEY, AUDIO_DIR
+from src.config import GEMINI_API_KEY, GEMINI_TTS_MODEL, AUDIO_DIR
 from src.utils import get_logger
 
 logger = get_logger(__name__)
@@ -38,7 +38,7 @@ def _gemini_speak(text: str, output_name: str, voice_style: str) -> Path | None:
         tone = "professional and measured" if voice_style == "formal" else "excited and conversational"
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_TTS_MODEL,
             contents=f"Read in Amharic with {tone} voice. Return audio: {text}",
         )
 

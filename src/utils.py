@@ -1,8 +1,7 @@
-"""Shared utilities: logging, retries, file helpers."""
+"""Shared utilities: logging and retries."""
 import logging
 import time
 from functools import wraps
-from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +32,3 @@ def retry(max_attempts: int = 3, delay: float = 2.0):
         return wrapper
     return decorator
 
-def ensure_dir(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    return path

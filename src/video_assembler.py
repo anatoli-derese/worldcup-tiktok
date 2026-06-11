@@ -1,5 +1,6 @@
 """Assemble slideshow video with FFmpeg."""
-import subprocess, shlex
+import shlex
+import subprocess
 from pathlib import Path
 from src.config import OUTPUT_DIR, VIDEO_WIDTH, VIDEO_HEIGHT
 from src.utils import get_logger
@@ -14,8 +15,6 @@ def assemble_video(image_paths: list[Path], audio_path: Path, output_name: str, 
         return None
 
     output_path = OUTPUT_DIR / f"{output_name}.mp4"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     list_file = OUTPUT_DIR / f"{output_name}_list.txt"
     lines = [f"file '{img.absolute()}'\nduration {duration_per_image}" for img in image_paths]
     lines.append(f"file '{image_paths[-1].absolute()}'")

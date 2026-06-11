@@ -1,7 +1,10 @@
 """Generate match card images for TikTok slideshows."""
-import io, re, requests, time
+import io
+import re
+import xml.etree.ElementTree as ET
+import requests
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import urljoin
 from PIL import Image, ImageDraw, ImageFont
 from src.config import IMAGES_DIR, VIDEO_WIDTH, VIDEO_HEIGHT
 from src.match_data import MatchInfo
@@ -44,14 +47,13 @@ def _scrape_news_fast(match: MatchInfo, count: int, match_dir: Path) -> list[Pat
             params={"q": f"{match.home_team} {match.away_team} world cup", "hl": "en", "ceid": "US:en"},
             timeout=8,
         )
-        import xml.etree.ElementTree as ET
         root = ET.fromstring(resp.text)
         urls = [item.find("link").text for item in root.iter("item") if item.find("link") is not None]
     except Exception:
         return []
 
     paths = []
-    for i, url in enumerate(urls[:min(count, 3)]):
+    for url in urls[:min(count, 3)]:
         try:
             page = requests.get(url, timeout=8, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
             og = re.search(r'og:image["\'][^>]+content=["\']([^"\']+)', page.text[:50000])
@@ -61,7 +63,6 @@ def _scrape_news_fast(match: MatchInfo, count: int, match_dir: Path) -> list[Pat
 
             for img_url in img_urls[:5]:
                 if img_url.startswith("/"):
-                    from urllib.parse import urljoin
                     img_url = urljoin(page.url, img_url)
                 if not img_url.startswith("http") or "logo" in img_url.lower() or "icon" in img_url.lower():
                     continue
