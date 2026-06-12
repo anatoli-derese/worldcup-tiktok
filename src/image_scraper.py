@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 
 
 def scrape_images(match: MatchInfo, count: int = 6) -> list[Path]:
-    match_dir = IMAGES_DIR / match.id
+    match_dir = IMAGES_DIR / str(match.id)
     match_dir.mkdir(parents=True, exist_ok=True)
 
     paths = []

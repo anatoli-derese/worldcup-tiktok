@@ -1,0 +1,8 @@
+[
+  {"id": "canada_bosnia", "home": "Canada", "away": "Bosnia and Herzegovina", "utc": "2026-06-12T19:00:00Z", "slug": "canada_bosnia"},
+  {"id": "usa_paraguay", "home": "USA", "away": "Paraguay", "utc": "2026-06-13T01:00:00Z", "slug": "usa_paraguay"},
+  {"id": "qatar_switzerland", "home": "Qatar", "away": "Switzerland", "utc": "2026-06-13T19:00:00Z", "slug": "qatar_switzerland"},
+  {"id": "brazil_morocco", "home": "Brazil", "away": "Morocco", "utc": "2026-06-13T22:00:00Z", "slug": "brazil_morocco"},
+  {"id": "haiti_scotland", "home": "Haiti", "away": "Scotland", "utc": "2026-06-14T01:00:00Z", "slug": "haiti_scotland"},
+  {"id": "australia_turkiye", "home": "Australia", "away": "Turkiye", "utc": "2026-06-14T04:00:00Z", "slug": "australia_turkiye"}
+]
